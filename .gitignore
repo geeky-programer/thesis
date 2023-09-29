@@ -1,0 +1,13 @@
+__pycache__
+.git
+dataset
+bert
+data/1881-1882
+thesis
+**/node_modules
+**/classla_resources
+data/1881-1882/**
+data/1882-1883/**
+data/1883-1884/**
+data/pdf_test/**
+data/one_paper/**
