@@ -29,11 +29,13 @@ class ErrorDetectorRunner:
 
         self.dataset_parser = DatasetParser(config)
 
+        # Set device to GPU if available, otherwise CPU
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         print("Available device: {}".format(self.device))
         print("Tokenizer directory is {}".format(self.bert_tokenizer_directory))
         
+        # Initialize tokenizer and model
         self.tokenizer = BertTokenizer.from_pretrained("bert-base-multilingual-cased")
         self.model = ErrorDetectionModel()
 
@@ -45,6 +47,7 @@ class ErrorDetectorRunner:
 
         self.model.to(self.device)
 
+        # Download NLTK sentence tokenizer
         nltk.download('punkt')
         self.sentence_tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
 
@@ -57,11 +60,14 @@ class ErrorDetectorRunner:
         print(self.config.get_train_dataset())
         train_words, train_aligned_words, train_gs_words, train_labels = self.dataset_parser.read_train_dataset()
 
+        # Tokenize the training dataset
         train_inputs, train_labels, train_masks, _ = self.dataset_parser.tokenize_dataset(train_words[:100], train_labels[:100], self.max_sequence_length, self.tokenizer)
 
+        # Split the dataset into training and validation sets
         train_inputs, validation_inputs, train_masks,\
             validation_masks, train_labels, validation_labels = train_test_split(train_inputs, train_masks, train_labels, test_size=0.1, random_state=42)
 
+        # Create DataLoader for training and validation sets
         train_data = TensorDataset(train_inputs, train_masks, train_labels)
         train_sampler = SequentialSampler(train_data)
         train_dataloader = DataLoader(train_data, pin_memory=True, num_workers=2, sampler=train_sampler, batch_size=self.batch_size)
@@ -72,6 +78,7 @@ class ErrorDetectorRunner:
 
         eval_every = 1
 
+        # Prepare optimizer and schedule (linear warmup and decay)
         param_optimizer = list(self.model.named_parameters())
         optimizer_grouped_parameters = [
             {
@@ -105,6 +112,7 @@ class ErrorDetectorRunner:
         all_true_labels = []
         all_masks = []
 
+        # Training loop
         for epoch in range(epochs):
             print("Running epoch: {}".format(epoch))
             self.model.train()
@@ -140,7 +148,7 @@ class ErrorDetectorRunner:
                 self.optimizer.step()
                 scheduler.step()
 
-            
+            # Calculate training metrics
             predictions = [list(p) for logits in logits_list for p in np.argmax(logits.to("cpu").numpy(), axis=2)]
             true_labels = [tl.to("cpu").numpy() for tl in true_labels]
             b_input_mask_list = [tl.to("cpu").numpy() for tl in masks]
@@ -168,6 +176,7 @@ class ErrorDetectorRunner:
             all_true_labels.append(true_labels)
             all_masks.append(b_input_mask_list)
 
+            # Evaluate the model on the validation set
             if epoch % eval_every == 0:
                 curr_f1 = self.evaluate(val_dataloader)
                 if curr_f1 > best_f1:
@@ -194,6 +203,7 @@ class ErrorDetectorRunner:
         true_labels = []
         true_masks = []
 
+        # Evaluation loop
         for batch in tqdm(loader):
             batch = tuple(t.to(self.device) for t in batch)
             input_ids, input_labels, input_mask = batch
@@ -221,6 +231,7 @@ class ErrorDetectorRunner:
         pred_labels_new = []
         true_labels_new = []
 
+        # Calculate evaluation metrics
         for pred_label, true_label, input_mask in zip(predictions, true_labels, true_masks):
             for y_pred, y_true, t_mask in zip(pred_label, true_label, input_mask):
                 if t_mask:
@@ -246,6 +257,7 @@ class ErrorDetectorRunner:
         if not os.path.exists(model_output_directory):
             os.makedirs(model_output_directory)
 
+        # Save the model and tokenizer
         torch.save(
             {
                 'model_state_dict': self.model.state_dict(),
@@ -257,16 +269,16 @@ class ErrorDetectorRunner:
         self.tokenizer.save_pretrained(tokenizer_output_directory)
 
     def inference(self, test_sentence):
-        # print(test_sentence)
+        # Tokenize the input sentence
         tokenized_sentence = self.tokenizer.encode(test_sentence)[:100]
 
-        #print(self.tokenizer.decode(tokenized_sentence))
         attention_mask = np.zeros(100)
         attention_mask[:len(tokenized_sentence)] = 1
         tokenized_sentence += [0] * (100 - len(tokenized_sentence))
         input_ids = torch.tensor([tokenized_sentence]).cpu()
         attention_mask = torch.tensor([attention_mask]).cpu()
 
+        # Perform inference
         with torch.no_grad():
             logits = self.model(input_ids, attention_mask)
         

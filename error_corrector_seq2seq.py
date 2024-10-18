@@ -10,6 +10,7 @@ from typing import Any, NamedTuple
 from torch import optim
 from Levenshtein import distance as levenshtein_distance
 
+# NamedTuple for Decoder input
 class DecoderInput(NamedTuple):
   new_tokens: Any
   encoder_output: Any
@@ -17,10 +18,12 @@ class DecoderInput(NamedTuple):
   coverage_vector: Any
   step: int
 
+# NamedTuple for Decoder output
 class DecoderOutput(NamedTuple):
   logits: Any
   attention_distribution: Any
 
+# Encoder class definition
 class Encoder(nn.Module):
   def __init__(self, input_size, hidden_size, bidirectional=True):
     super(Encoder, self).__init__()
@@ -40,6 +43,7 @@ class Encoder(nn.Module):
 
     return output, encoder_states
 
+# Bahdanau Attention mechanism
 class BahdanauAttention(nn.Module):
   def __init__(self, units, max_encoder_seq_length, device):
     super().__init__()
@@ -66,6 +70,7 @@ class BahdanauAttention(nn.Module):
 
     return context_vector, attention_distribution, scores
 
+# Decoder class definition
 class Decoder(nn.Module):
   def __init__(self, output_size, units, max_encoder_seq_length, enable_copy, device):
     super(Decoder, self).__init__()
@@ -107,6 +112,7 @@ class Decoder(nn.Module):
 
     return DecoderOutput(logits, attention_distribution), [state_h, state_c], copy_logits
 
+# Seq2Seq Error Corrector class definition
 class Seq2SeqErrorCorrector:
   def __init__(self,
                number_tokens,
@@ -163,6 +169,7 @@ class Seq2SeqErrorCorrector:
       self.decoder.cuda()
       print("Cuda is available")
 
+  # Training function
   def train(self, dataloader, val_dataloader=None, epochs=50, eval_every=1, save=False):
     start = time.time()
     all_losses = []
@@ -190,6 +197,7 @@ class Seq2SeqErrorCorrector:
 
     return all_losses
 
+  # Prediction function
   def predict(self, inputs, beam_size = 3):
     with torch.no_grad():
         transformed_input = self.encoder_text_processor.to_ids(inputs)
@@ -197,9 +205,11 @@ class Seq2SeqErrorCorrector:
 
         return self._do_predict(transformed_input, beam_size)
 
+  # Internal prediction function
   def _do_predict(self, input_tensor, beam_size = 3):
     return self._predict_beam(input_tensor, beam_size) if self.use_beam else self._predict(input_tensor)
 
+  # Save model function
   def save_model(self, directory, suffix=''):
     if not os.path.exists(directory):
       os.makedirs(directory)
@@ -214,6 +224,7 @@ class Seq2SeqErrorCorrector:
         directory + '/seq2seq_torch' + suffix
       )
 
+  # Load model function
   def load_model(self, directory, suffix=''):
     checkpoint = torch.load(directory + '/seq2seq_torch' + suffix, map_location=self.device)
 
@@ -223,6 +234,7 @@ class Seq2SeqErrorCorrector:
     self.encoder.to(self.device)
     self.decoder.to(self.device)
 
+  # Training step function
   def _train(self, input_tensor, target_tensor, doprint = False):
     input_length = input_tensor.size(0)
     target_length = target_tensor.size(0)
@@ -280,6 +292,7 @@ class Seq2SeqErrorCorrector:
 
     return loss.item() / target_length
 
+  # Greedy prediction function
   def _predict(self, data):
     input_length = data.size()[0]
     encoder_output, encoder_hidden = self.encoder(data)
@@ -320,6 +333,7 @@ class Seq2SeqErrorCorrector:
 
     return output_tokens
 
+  # Beam search prediction function
   def _predict_beam(self, data, beam_size=3):
     input_length = data.size()[0]
     encoder_output, encoder_hidden = self.encoder(data)
@@ -393,6 +407,8 @@ class Seq2SeqErrorCorrector:
 
     return beam_outputs
   
+
+  # Evaluate the model using a dataloader
   def eval_loader(self, dataloader):
     distances_input = []
     distances_model = []
@@ -400,45 +416,45 @@ class Seq2SeqErrorCorrector:
 
     with torch.no_grad():
       for _, batch in enumerate(tqdm(dataloader, position=0, leave=True)):
-
         input_tensor, target_tensor = batch
 
+        # Convert tensors to numpy arrays and get the indices of the max values
         input_tensor_index = input_tensor.detach().numpy().argmax(axis=-1)
         target_tensorr_index = target_tensor.detach().numpy().argmax(axis=-1)
 
         input_words = []
         target_words = []
-        actuals = []
 
+        # Convert input tensor indices to actual words
         for i, w in enumerate(input_tensor_index):
           actual_input = ''.join([self.reverse_input_char_index[x] for x in w]).rstrip()
-
           input_words.append(actual_input)
 
+        # Convert target tensor indices to actual words
         for i, w in enumerate(target_tensorr_index):
           target_input = ''.join([self.reverse_target_char_index[x] for x in w])
-
           target_input = target_input[:target_input.index(self.end_character)] if self.end_character in target_input else target_input.rstrip()
           target_input = target_input.replace('\t','')
-
           target_words.append(target_input)
 
         input_tensor = input_tensor.to(self.device)
 
+        # Predict the output using the model
         actuals = self.predict_text(input_tensor, 3, True)
 
+        # Calculate Levenshtein distances
         for inp, gs, act in zip(input_words, target_words, actuals):
           levenshtein_distance_i_gs = levenshtein_distance(inp, gs)
           levenshtein_distance_a_gs = levenshtein_distance(act, gs)
 
           distances_input.append(levenshtein_distance_i_gs)
           distances_model.append(levenshtein_distance_a_gs)
-
           lens.append(len(gs))
 
     print(distances_input)
     print(distances_model)
 
+    # Calculate the improvement score
     score = []
     for x, y, z in zip(distances_input, distances_model, lens):
       t = (x - y) / z
@@ -450,6 +466,7 @@ class Seq2SeqErrorCorrector:
 
     return improvement
 
+  # Predict text using the model
   def predict_text(self, inputs, beam_size = 3, is_tensor = False):
     out = self.predict(inputs) if not is_tensor else self._do_predict(inputs, beam_size)
 
@@ -470,6 +487,7 @@ class Seq2SeqErrorCorrector:
 
     return actuals
 
+  # Calculate diagonal attention loss
   def _diagonal_attention_loss(self, attention_distribution, current_step):
     total_sum = 0.0
     if current_step - self.diag_loss_length >= 0:
@@ -479,16 +497,19 @@ class Seq2SeqErrorCorrector:
 
     return total_sum
 
+  # Calculate coverage loss
   def _compute_coverage_loss(self, coverage_vector, attention_distribution):
     total_sum = torch.sum(torch.minimum(coverage_vector, torch.squeeze(attention_distribution, dim=1)))
 
     return total_sum
 
+  # Convert seconds to minutes and seconds
   def _as_minutes(self, s):
     m = math.floor(s / 60)
     s -= m * 60
     return '%dm %ds' % (m, s)
 
+  # Calculate time since a given start time
   def _time_since(self, since, percent):
       now = time.time()
       s = now - since
